@@ -10,7 +10,7 @@ Usage:
         [--out-json <extents.json>]
 
 What it does (single frame):
-  1. Crop dynamic band [y0..y1] (defaults match lexiconv.mp4 invariants).
+  1. Crop dynamic band [y0..y1] (defaults match lexi_iphone_messenger_all.mp4 invariants).
   2. Convert to gray, run cv2.Canny(lo, hi).
   3. Morphological close horizontally to bridge text-stroke gaps inside bubbles
      (so the bubble outline is preferred over interior text edges).

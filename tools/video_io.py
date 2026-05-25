@@ -118,11 +118,11 @@ def open_rgb_pipe(
     stderr is sent to DEVNULL to avoid OS-pipe-buffer deadlock on a long run.
 
     hwaccel: passed to ffmpeg `-hwaccel`. Defaults to None (CPU decode).
-    Benchmark on lexiconv.mp4 (1126x2436 HEVC, 3060 frames) showed CPU
-    decode ~8 s vs NVDEC ~10 s on a Ryzen 9 7845HX + RTX 4070 Laptop --
-    NVDEC has GPU init + readback overhead that exceeds the dedicated HW
-    decoder's gain on a single-stream short video. Pass "cuda" only if you
-    confirm a measured win on your input.
+    Benchmark on lexi_iphone_messenger_all.mp4 (1126x2436 HEVC, 3060 frames)
+    showed CPU decode ~8 s vs NVDEC ~10 s on a Ryzen 9 7845HX + RTX 4070
+    Laptop -- NVDEC has GPU init + readback overhead that exceeds the
+    dedicated HW decoder's gain on a single-stream short video. Pass "cuda"
+    only if you confirm a measured win on your input.
 
     pix_fmt: "rgb24" (default, 3 B/px) or "gray" (1 B/px). Using "gray" cuts
     pipe bandwidth 3x and lets analysis skip the RGB->luma conversion. The
@@ -132,10 +132,10 @@ def open_rgb_pipe(
     crop: (w, h, x, y) ffmpeg crop spec. When set, ffmpeg crops the frame
     server-side before piping, so callers receive only the dyn band (or
     whatever rectangle they asked for). Combined with pix_fmt="gray" this
-    drops pipe bandwidth 2.5x on the 1126x969 dyn band of lexiconv.mp4 and
-    measured 3.11x faster than the full-frame gray pipe in
-    bench_ffmpeg_pipes.py option 4. Caller is responsible for sizing its
-    read buffer / reshape to (h, w).
+    drops pipe bandwidth 2.5x on the 1126x969 dyn band of
+    lexi_iphone_messenger_all.mp4 and measured 3.11x faster than the
+    full-frame gray pipe in bench_ffmpeg_pipes.py option 4. Caller is
+    responsible for sizing its read buffer / reshape to (h, w).
     """
     cmd = [ffmpeg, "-v", "error"]
     if hwaccel:
@@ -153,9 +153,10 @@ def open_rgb_pipe(
             cmd += ["-vsync", "vfr"]
     cmd += ["-f", "rawvideo", "-pix_fmt", pix_fmt, "-"]
     # bufsize: a healthy buffer avoids per-byte Python pipe round-trips.
-    # Measured on lexiconv.mp4 (1126x2436 gray): bufsize=0 -> 57 s of pipe
-    # read; bufsize=~11 MB (4 frames) -> 20 s. 16 MB covers 4K-class gray
-    # frames with margin. See AGENTS.md "Performance" -> "buffered pipe".
+    # Measured on lexi_iphone_messenger_all.mp4 (1126x2436 gray): bufsize=0
+    # -> 57 s of pipe read; bufsize=~11 MB (4 frames) -> 20 s. 16 MB covers
+    # 4K-class gray frames with margin. See AGENTS.md "Performance" ->
+    # "buffered pipe".
     return subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         bufsize=16 * 1024 * 1024,
@@ -413,10 +414,11 @@ def match_1d_offset(
 
     Implementation: numeric core is a Numba @njit kernel. We tried a
     vectorized numpy variant (NaN-padded ref + sliding_window_view) -- it
-    produced identical results but ran 1.7x SLOWER on lexiconv.mp4 because
-    the 50 MB per-call candidate matrix blew the L2/L3 cache. Numba on the
-    Python loop keeps the cache-friendly per-iteration shape AND removes
-    numpy dispatch overhead. See AGENTS.md "Performance".
+    produced identical results but ran 1.7x SLOWER on
+    lexi_iphone_messenger_all.mp4 because the 50 MB per-call candidate
+    matrix blew the L2/L3 cache. Numba on the Python loop keeps the
+    cache-friendly per-iteration shape AND removes numpy dispatch overhead.
+    See AGENTS.md "Performance".
     """
     if ref.ndim == 1:
         ref2 = np.ascontiguousarray(ref, dtype=np.float32).reshape(-1, 1)
@@ -461,7 +463,8 @@ def _match_1d_core(
     < min_overlap. Equivalent to the prior Python loop within float
     rounding. Numba fuses the inner abs-diff + accumulator so we get a
     tight scalar loop instead of one numpy dispatch per offset (~9-10x
-    speedup on the lexiconv profile of search_radius=400, h=969, K=8).
+    speedup on the lexi_iphone_messenger_all profile of search_radius=400,
+    h=969, K=8).
     """
     K_ref = ref.shape[0]
     K_cols = ref.shape[1]

@@ -1,6 +1,6 @@
 """Smoke test for tools/detect_overlay_circles.py.
 
-Loads a few frames from lexiconv.mp4, runs discovery + per-band detection,
+Loads a few frames from the sample input, runs discovery + per-band detection,
 prints results. Verifies the scroll-to-bottom button is found and masked.
 """
 
@@ -23,7 +23,7 @@ from detect_overlay_circles import (  # type: ignore  # noqa: E402
 
 def main() -> int:
     ffmpeg, _ = _resolve_ffmpeg()
-    src = ROOT / "lexiconv.mp4"
+    src = ROOT / "lexi_iphone_messenger_all.mp4"
     if not src.exists():
         print(f"[err] missing {src}", file=sys.stderr)
         return 2

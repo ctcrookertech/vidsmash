@@ -6,10 +6,10 @@
 *.avi
 *.m4v
 
-# Generated stitch outputs (PNG chunks) — regenerate from video + keyframes.json
+# Generated stitch outputs (chunk PNGs only) — regenerate from video + keyframes.json
 strategy_a/out/*.png
 strategy_b/out/stitch/*.png
-out/stitch/*.png
+out/**/keyframe_chunk_*.png
 compare_out/*.png
 
 # Debug crops and intermediate frame extracts

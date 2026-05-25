@@ -1,7 +1,7 @@
 """Inspect brightness/colour distribution in a canvas region.
 
 Usage:
-    python tools/inspect_brightness.py --input out/stitch/keyframe_chunk_004.png \\
+    python tools/inspect_brightness.py --input out/lexi_iphone_messenger_all/keyframe_chunk_004.png \\
         --x0 850 --x1 1126 --y0 0 --y1 4096 --bg 0,0,0
 
 Prints:

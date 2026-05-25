@@ -4,7 +4,8 @@ Generic helper used by output directories. Picks files by glob, sorts them
 by filename, writes a 1126-pixel-wide stack to view.html in the same dir.
 
 Usage:
-  python tools/make_view_html.py --dir out/stitch --glob "keyframe_chunk_*.png" --title "vidsmash"
+  python tools/make_view_html.py --dir out/lexi_iphone_messenger_all \\
+      --glob "keyframe_chunk_*.png" --title "vidsmash: lexi_iphone_messenger_all"
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Extract a single frame from a video as PNG via ffmpeg.
 
 Usage:
-  python tools/extract_frame.py --input lexiconv.mp4 --frame 1500 --out debug_overlays/frame_1500.png
+  python tools/extract_frame.py --input lexi_iphone_messenger_all.mp4 --frame 1500 --out debug_overlays/frame_1500.png
 """
 
 from __future__ import annotations

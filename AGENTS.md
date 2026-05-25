@@ -7,20 +7,22 @@ Style: STE100-like paragraphs and decision tables `[Option | Details | Tradeoffs
 
 Convert a hand-scrolled vertical screen recording (iOS Messenger conversation) into a **continuous vertical image broken into ordered, non-overlapping PNG chunks of bounded height**. All content must be preserved. No overlap between chunks.
 
-Sample input shipped with the repo: `lexiconv.mp4` (not committed — `.mp4` is ignored).
+Sample input shipped with the repo: `lexi_iphone_messenger_all.mp4` (not committed — `.mp4` is ignored). Input naming convention: `lexi_<source>_<scope>.mp4` (e.g. `lexi_iphone_messenger_all`, future `lexi_iphone_messages_short`, `lexi_android_whatsapp_dm`). The leading `lexi_` token is the source-conversation tag for this project; the trailing `_all` / `_short` etc. distinguish full archive vs trimmed clips.
 
 ## Project layout
 
 ```
 vidsmash/
-  lexiconv.mp4              # sample input (gitignored)
-  AGENTS.md                 # this file
+  lexi_iphone_messenger_all.mp4   # sample input (gitignored)
+  AGENTS.md                       # this file
+  ALTERNATIVE.md                  # deferred OCR+HTML hybrid approach (with switch triggers)
   .gitignore
-  bench_ffmpeg_pipes.py     # ffmpeg pipe perf bench (kept as a perf reference)
+  run_pipeline_iphone_messenger.cmd  # per-video wrapper (one per source archetype)
+  bench_ffmpeg_pipes.py           # ffmpeg pipe perf bench (kept as a perf reference)
   tools/
     video_io.py             # ffmpeg pipe wrappers, Numba JIT row/col profiles,
                             #   match_1d_offset, ChunkWriter, static-band detection
-    detect_pauses.py        # velocity-based pause detector → out/keyframes.json
+    detect_pauses.py        # velocity-based pause detector → <out_dir>/keyframes.json
     detect_overlays.py      # agreement-fraction overlay-mask detector
                             #   (iOS scrollbar / static gutter etc.)
     detect_overlay_circles.py # HoughCircles-based screen-fixed circular
@@ -32,7 +34,7 @@ vidsmash/
     stitch_keyframes.py     # keyframe+bridge stitcher with multi-pass overlay-aware
                             #   canvas fill + extent-based gutter clear +
                             #   per-band detected-circle masks
-                            #   → out/stitch/keyframe_chunk_NNN.png
+                            #   → <out_dir>/keyframe_chunk_NNN.png
     validate_stitch.py      # pair-overlap MAD + canvas placement MAD + coverage
     inspect_keyframe_chain.py
     inspect_brightness.py   # per-region pixel-colour histogram inspector (debug)
@@ -43,28 +45,31 @@ vidsmash/
     smoke_circle_detector.py # smoke test for detect_overlay_circles
     diff_circle_regions.py  # side-by-side patch diff: baseline vs circle-masked stitch
     make_view_html.py       # emit view.html that vertically renders chunk PNGs
-  ALTERNATIVE.md            # deferred OCR+HTML hybrid approach (with switch triggers)
   out/
-    keyframes.json          # detect_pauses output (timeline + per-pause meta)
-    timeline.png            # detect_pauses visualisation
-    stitch/
-      keyframe_chunk_NNN.png   # ordered, non-overlapping vertical chunks
-      report.json              # placements, mask stats, gaps, params
-      view.html                # generated viewer
+    <video_basename>/            # per-video output dir (one per input archetype)
+      keyframes.json             # detect_pauses output (timeline + per-pause meta)
+      timeline.png               # detect_pauses visualisation
+      keyframe_chunk_NNN.png     # ordered, non-overlapping vertical chunks
+      report.json                # placements, mask stats, gaps, params
+      view.html                  # generated viewer
       run.log
   debug_overlays/           # ad-hoc crops; gitignored
 ```
 
+**Per-video output convention.** Every wrapper places all four stages' artifacts in `out\<video_basename>\` (basename = input file without `.mp4`). This keeps each input self-contained for side-by-side review and lets us A/B different stitch flag tunings on the same input by overriding the second positional arg (e.g. `run_pipeline_iphone_messenger.cmd lexi_iphone_messenger_all.mp4 out\lexi_iphone_messenger_all_test --no-seam-line-fix`). Historical exploratory outputs (`out\stitch_*\`, `out\strategy_*\`) remain gitignored and are not regenerated.
+
+**Per-video wrappers.** New input archetypes get their own wrapper (e.g. `run_pipeline_android_whatsapp.cmd`). Different source apps have different overlay shapes, scroll-button geometry, and gutter widths — pinning input-specific defaults in their own wrapper keeps the stitch flag surface clean for everyone.
+
 ## Pipeline (one command per stage)
 
 ```
-python tools/detect_pauses.py    --input lexiconv.mp4 --out out
-python tools/stitch_keyframes.py --input lexiconv.mp4 --keyframes out/keyframes.json --out out/stitch
-python tools/validate_stitch.py  --input lexiconv.mp4 --out out/stitch
-python tools/make_view_html.py   --dir out/stitch --glob "keyframe_chunk_*.png" --title "vidsmash"
+python tools/detect_pauses.py    --input lexi_iphone_messenger_all.mp4 --out out/lexi_iphone_messenger_all
+python tools/stitch_keyframes.py --input lexi_iphone_messenger_all.mp4 --keyframes out/lexi_iphone_messenger_all/keyframes.json --out out/lexi_iphone_messenger_all
+python tools/validate_stitch.py  --input lexi_iphone_messenger_all.mp4 --out out/lexi_iphone_messenger_all
+python tools/make_view_html.py   --dir out/lexi_iphone_messenger_all --glob "keyframe_chunk_*.png" --title "vidsmash: lexi_iphone_messenger_all"
 ```
 
-**Canonical wrapper:** `run_pipeline.cmd <input.mp4> [out_dir] [extra_args...]` at the repo root runs the four stages with `PYTHONIOENCODING=utf-8` set (PowerShell cp1252 breaks on Unicode help text) and tolerates the pre-existing `validate_stitch` schema mismatch as a warning. No stitch flags are pinned in the wrapper itself — the canonical behaviour IS the stitch_keyframes default. The wrapper forwards extra args through to stitch.
+**Canonical wrapper:** `run_pipeline_iphone_messenger.cmd [input.mp4] [out_dir] [extra_args...]` at the repo root runs the four stages with `PYTHONIOENCODING=utf-8` set (PowerShell cp1252 breaks on Unicode help text) and tolerates the pre-existing `validate_stitch` schema mismatch as a warning. Defaults: `input=lexi_iphone_messenger_all.mp4`, `out_dir=out\<input_basename>`. No stitch flags are pinned in the wrapper itself — the canonical behaviour IS the stitch_keyframes default. The wrapper forwards extra args through to stitch. The wrapper also reuses `<out_dir>\keyframes.json` if present (skips detect_pauses), so iterating on stitch flags does not re-pay the ~25 s pause-detection cost.
 
 ### Canonical stitch defaults (DO NOT DOWNGRADE WITHOUT EVIDENCE)
 
@@ -75,16 +80,16 @@ These behaviours are ON by default in `tools/stitch_keyframes.py`. Each was visu
 | `--clear-beyond-bubble-extent` (True) | Pass-7 Canny gutter clear. Without it the scrollbar leak + pass-2 gutter fabrication artifacts return immediately. | `--no-clear-beyond-bubble-extent` |
 | `--bubble-extent-pad 0` | Canny gradient already gives a pixel-perfect right edge (x=R=1102 on iOS @3x); any pad > 0 leaves a few-px bubble bulge into the gutter. | pass a different `--bubble-extent-pad N` |
 | `--bubble-extent-synthetic-aa` (True) | Re-paints the 3-px AA fringe at the right bubble edge so the post-clear edge looks smooth instead of mechanical. | `--no-bubble-extent-synthetic-aa` |
-| `--bubble-extent-aa-inset 1` | Shaves 1 px to remove the residual 1-px bubble extension past the visually-perceived edge that Canny reports on lexiconv. | pass `--bubble-extent-aa-inset 0` |
+| `--bubble-extent-aa-inset 1` | Shaves 1 px to remove the residual 1-px bubble extension past the visually-perceived edge that Canny reports on `lexi_iphone_messenger_all.mp4`. | pass `--bubble-extent-aa-inset 0` |
 | `--mask-detected-circles` (True) | Auto-discovers + masks the iOS scroll-to-latest button across bands. Without it the button leaves a dark ghost inside bubbles via pass-1 partial averaging. | `--no-mask-detected-circles` |
 | `--rescue-starved-circles` (True) | Decodes extra frames whose button sits elsewhere, fills the all-button-covered canvas zones. Without it pass-4 Telea inpaint smears nearby text into the starved zones. | `--no-rescue-starved-circles` |
 | `--rescue-refine-offset` (True) | Matches each rescue band's luma row profile against the nearest already-placed band to correct dys-cum_y drift (a few px to 1-2 text lines over long scroll runs). Without it rescue text appears vertically shifted, sometimes showing wrong characters that come from a different scroll position. | `--no-rescue-refine-offset` |
-| `--rescue-refine-search-radius 80` | Vertical search window for the rescue-offset match. 80 px (~4 text lines) covers all observed drifts on lexiconv (max seen: 76 px). If reports show corrections clipped at the cap, bump higher. | pass `--rescue-refine-search-radius N` |
+| `--rescue-refine-search-radius 80` | Vertical search window for the rescue-offset match. 80 px (~4 text lines) covers all observed drifts on `lexi_iphone_messenger_all.mp4` (max seen: 76 px). If reports show corrections clipped at the cap, bump higher. | pass `--rescue-refine-search-radius N` |
 | `--seam-line-fix` (True) | Pass-9: removes thin 1-2 row off-colour horizontal seams inside bubble interiors that survive pass-1 averaging. Vertical-neighbour-agreement check naturally preserves text (text's vertical neighbours are also text). | `--no-seam-line-fix` |
 
 If a regression report comes in that turns out to be one of these defaults being off, the first action is to confirm `report.json` `params` block matches the defaults table above, not to add more flags.
 
-## Input invariants (per sample video `lexiconv.mp4`; new inputs may differ)
+## Input invariants (per sample video `lexi_iphone_messenger_all.mp4`; new inputs may differ)
 
 | Field | Value |
 |---|---|
@@ -107,7 +112,7 @@ User-supplied invariants that hold across inputs:
 
 Two-pass. Pass 1 (decode): for every frame build a K-segmented luma row profile and a column profile of the dynamic band; ffmpeg-side crop + gray and a 16 MB pipe buffer keep this near disk-read speed. Pass 2 (match): `match_1d_offset(prev, cur, predicted_p=0, search_radius=R)` per consecutive pair gives scroll velocity `dy` and best-fit MAD. A frame is a pause if `|dy| ≤ dy_thr AND mad ≤ mad_thr` for ≥ `min_pause_len` consecutive frames; small motion blips are coalesced. Each pause's midpoint becomes a keyframe.
 
-Output: `out/keyframes.json` carries `dy_series`, `keyframes`, `pauses`, `between_runs`, `drag_suspect` flags, and video meta (`dyn_top`, `dyn_bot`, `dyn_h`, `w`). On `lexiconv.mp4`: 45 pause groups covering 584 frames (median pause length 6, max 175).
+Output: `<out_dir>/keyframes.json` carries `dy_series`, `keyframes`, `pauses`, `between_runs`, `drag_suspect` flags, and video meta (`dyn_top`, `dyn_bot`, `dyn_h`, `w`). On `lexi_iphone_messenger_all.mp4`: 45 pause groups covering 584 frames (median pause length 6, max 175).
 
 ## Detect overlays (`tools/detect_overlays.py`)
 
@@ -120,7 +125,7 @@ mask[y, x]      = n_agree[y, x] / N_bands ≥ frac
 
 with defaults `frac=0.6`, `tol=12`. Connected components are dilated by 2 px and components smaller than `min_area=30` are dropped. Entry: `detect_overlay_mask_from_bands(bands, *, agreement_frac=0.6, agreement_tol=12, dilate=2, min_area=30) → (mask, report)`. Report `components[*].bbox` is `[x0, y0, x1, y1]`.
 
-On `lexiconv.mp4`: 426 components, 42.8 % of one band masked; dominant components are the left gutter (x = 0..355) and the right-edge area (x = 856..1126) containing the scrollbar. The scroll-to-latest button is **not** reliably caught here (it is conditionally visible and centered far inside the dynamic band where agreement-fraction sometimes falls below threshold). It is handled separately by `detect_overlay_circles.py`.
+On `lexi_iphone_messenger_all.mp4`: 426 components, 42.8 % of one band masked; dominant components are the left gutter (x = 0..355) and the right-edge area (x = 856..1126) containing the scrollbar. The scroll-to-latest button is **not** reliably caught here (it is conditionally visible and centered far inside the dynamic band where agreement-fraction sometimes falls below threshold). It is handled separately by `detect_overlay_circles.py`.
 
 ## Detect overlay circles (`tools/detect_overlay_circles.py`)
 
@@ -131,7 +136,7 @@ This module uses **OpenCV HoughCircles** in two stages:
 1. **Discovery** — `discover_persistent_circles(bands, *, min_prevalence=0.4, r_min=20, r_max=100, bin_px=8, param1=100, param2=30, min_dist=60, dp=1.2, median_blur_ksize=5) → (list[CircleSpec], report)`. Runs HoughCircles on each band, bins detections by `(cx_bin, cy_bin)` with `bin_px=8`, dedupes one vote per band per bin, and promotes any bin appearing in `≥ min_prevalence` fraction of bands. Returns one `CircleSpec` per promoted bin (cx, cy, r, prevalence, r_min, r_max, n_detected, n_total).
 2. **Per-band detection** — `detect_circle_in_band(band, *, expected_cx, expected_cy, expected_r, slack_xy=10, slack_r=4, pad=4, param1=100, param2=30, dp=1.2, median_blur_ksize=5, min_dist=60) → (mask, BandDetection)`. Crops a tight `(2*(r+slack_xy))²` ROI around the expected center, runs HoughCircles with `[r-slack_r, r+slack_r]` radius sweep, and returns the closest hit's filled disk mask (radius `detected_r + pad` to cover the AA outline). `~5-10 ms / band`.
 
-On `lexiconv.mp4`: discovery finds 1 spec at `(cx=564, cy=876, r=60)` with 63.9 % prevalence; per-band detector hits 42 / 61 placed bands; total mask area ≈ 540 k px (summed across bands).
+On `lexi_iphone_messenger_all.mp4`: discovery finds 1 spec at `(cx=564, cy=876, r=60)` with 63.9 % prevalence; per-band detector hits 42 / 61 placed bands; total mask area ≈ 540 k px (summed across bands).
 
 ## Stitch keyframes (`tools/stitch_keyframes.py`)
 
@@ -149,7 +154,7 @@ On `lexiconv.mp4`: discovery finds 1 spec at `(cx=564, cy=876, r=60)` with 63.9 
 
 5. **Chunk write.** Sort placed frames by `cum_y`, walk in order, cursor-model write into `ChunkWriter` (first-write-wins). `--ui keep-once` prepends `static_top` to the first chunk and appends `static_bot` to the last; `--ui strip` omits UI bands.
 
-On `lexiconv.mp4`: 45 keyframes + 16 bridges = 61 placements, 8 chunks of 4096 px (last 2102), canvas 29 307 px content, 30 774 rows written, ~36 s end-to-end (decode dominates).
+On `lexi_iphone_messenger_all.mp4`: 45 keyframes + 16 bridges = 61 placements, 8 chunks of 4096 px (last 2102), canvas 29 307 px content, 30 774 rows written, ~36 s end-to-end (decode dominates).
 
 **Known artefact.** The scroll-to-latest circular button can still leave one faint ghost on canvas rows where coverage = 1 (only one band covers the pixel, and that band has the overlay at this in-band position). The median-of-bands trick degenerates to identity at k = 1. Mitigations to revisit if it matters for downstream OCR: lower `--overlay-agreement-frac` (more aggressive masking), or extend pass 3 to also handle small isolated bbox regions (not just narrow vertical strips).
 
@@ -164,7 +169,7 @@ On `lexiconv.mp4`: 45 keyframes + 16 bridges = 61 placements, 8 chunks of 4096 p
 
 ## Performance — `detect_pauses.py`
 
-Profiled on AMD Ryzen 9 7845HX, NVIDIA RTX 4070 Laptop, NVMe SSD against `lexiconv.mp4` (1126 × 2436 HEVC, 3060 frames). Warm-cache.
+Profiled on AMD Ryzen 9 7845HX, NVIDIA RTX 4070 Laptop, NVMe SSD against `lexi_iphone_messenger_all.mp4` (1126 × 2436 HEVC, 3060 frames). Warm-cache.
 
 | Stage | Baseline | +A1 buffered pipe | +A2 ffmpeg-side crop+gray | +A3 Numba JIT |
 |---|---|---|---|---|
@@ -212,13 +217,13 @@ Hardware decode (`hwaccel="cuda"`) and ffmpeg-side crop are both opt-in params o
 ## Conventions
 
 - Decision-making in agent responses: short STE100 paragraphs or `[Option | Details | Tradeoffs]` tables with an explicit **Recommendation**.
-- Chunks named `keyframe_chunk_NNN.png`. Reports in `out/stitch/report.json`. Pause/keyframe data in `out/keyframes.json`. Timeline in `out/timeline.png`.
-- `.gitignore` excludes `*.mp4` and PNG outputs; commit the JSON/HTML/PY only. Outputs are regeneratable.
+- Chunks named `keyframe_chunk_NNN.png`. All four stages write into `out/<video_basename>/` (e.g. `out/lexi_iphone_messenger_all/`): `keyframes.json` + `timeline.png` (detect_pauses), `keyframe_chunk_NNN.png` + `report.json` (stitch), `view.html` (make_view_html). One self-contained dir per input archetype.
+- `.gitignore` excludes `*.mp4` and PNG outputs (`out/**/*.png`); commit the JSON/HTML/PY only. Outputs are regeneratable.
 
 ## Known issues / open work
 
 - **Faint scroll-to-latest button ghost** on coverage-1 canvas rows (see Stitch §). Acceptable for current outputs; revisit if it bites OCR.
-- **Drag-reveals-data extraction.** Stub only. `detect_pauses.py` flags drag-suspect pauses via column-profile MAD between adjacent pauses (29/45 on `lexiconv.mp4` — threshold may be too tight).
+- **Drag-reveals-data extraction.** Stub only. `detect_pauses.py` flags drag-suspect pauses via column-profile MAD between adjacent pauses (29/45 on `lexi_iphone_messenger_all.mp4` — threshold may be too tight).
 - **Decode-count vs ffprobe-report mismatch** is non-critical (`[warn] decoded N+2 frames but ffprobe reported N`).
 - **Text-on-black right-edge clipping.** System messages (centred "Learn more", "You're friends on Facebook", encryption notice) live OUTSIDE bubbles on black background. The Canny bubble-extent detector sometimes treats the strong text→background transition on the LAST glyph as a bubble right-edge, and pass-7 + aa_inset=1 then clips ~1-3 px off that final letter. Fix needs the bubble-extent detector to require evidence of a bubble FILL (blue/grey contiguous interior) inside detected R before treating R as a bubble edge; without that evidence treat the row as "no bubble" and skip pass-7 clearing. Not done; out of scope for the rescue/seam pass.
 - **Residual horizontal rescue offset.** `--rescue-refine-offset` corrects the VERTICAL component of cum_y drift via 1-D row-profile matching. Horizontal drift caused by accidental horizontal drag during recording is not addressed (no horizontal scroll model — the video is supposed to be vertical-only). Small residual sub-pixel horizontal misalignment also shows as edge blur on rescued text in a few frames. A 2-D match would need to be added if this becomes important.

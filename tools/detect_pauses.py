@@ -36,11 +36,11 @@ KEYFRAME: midpoint of each pause group. Choosing a frame from inside a true
 stationary run guarantees zero motion-blur and lets pairwise stitching be
 done with exact-pixel alignment.
 
-OUTPUT:
-  out/keyframes.json     (same schema as v1 + dy_series, mad_series)
-  out/timeline.png       (same layout; bottom heatmap is now |dy| instead of
-                          MAD, since |dy| is what actually distinguishes
-                          pauses from motion)
+OUTPUT (--out controls the directory; per-video convention is out/<video_basename>/):
+  <out>/keyframes.json    (same schema as v1 + dy_series, mad_series)
+  <out>/timeline.png      (same layout; bottom heatmap is now |dy| instead of
+                           MAD, since |dy| is what actually distinguishes
+                           pauses from motion)
 
 Limitations / future work:
   - Drag events (horizontal motion) also produce |dy| ~= 0 in this signal.
@@ -269,7 +269,7 @@ def main() -> int:
     )
     ap.add_argument("--no-coalesce", action="store_false", dest="coalesce")
     ap.add_argument("--save-frames", action="store_true",
-                    help="Write each keyframe as PNG under out/keyframes/")
+                    help="Write each keyframe as PNG under <out_dir>/keyframes/")
     ap.add_argument("--std-threshold", type=float, default=12.0)
     ap.add_argument("--min-static-run", type=int, default=16)
     ap.add_argument("--dynamic-top", type=int, default=-1)
@@ -307,9 +307,9 @@ def main() -> int:
     t_decode = 0.0
     t_profile = 0.0
     # ffmpeg-side crop drops pipe bandwidth ~2.5x for the dyn band of
-    # lexiconv.mp4 (1126x969 of 1126x2436). Measured 3.11x decode speedup vs
-    # full-frame gray pipe; see bench_ffmpeg_pipes.py option 4 +
-    # AGENTS.md "Performance -> A2".
+    # lexi_iphone_messenger_all.mp4 (1126x969 of 1126x2436). Measured 3.11x
+    # decode speedup vs full-frame gray pipe; see bench_ffmpeg_pipes.py
+    # option 4 + AGENTS.md "Performance -> A2".
     proc = open_rgb_pipe(
         ffmpeg, args.input, pix_fmt="gray",
         crop=(W, dyn_h, 0, top),

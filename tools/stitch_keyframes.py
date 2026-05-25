@@ -364,8 +364,8 @@ def main() -> int:
                          "AA-painting. Pass-7 clears x > (R - inset) + pad and pass-7b paints "
                          "AA at x = (R - inset - 2), (R - inset - 1), (R - inset). Use 1 to "
                          "remove a residual 1-px bubble extension past the visually-perceived "
-                         "edge that the detector reports. Default 1 (validated on lexiconv.mp4); "
-                         "set 0 to disable the shave.")
+                         "edge that the detector reports. Default 1 (validated on "
+                         "lexi_iphone_messenger_all.mp4); set 0 to disable the shave.")
     ap.add_argument("--mask-detected-circles", action=argparse.BooleanOptionalAction, default=True,
                     help="Auto-discover screen-fixed circular overlays (e.g. iOS "
                          "scroll-to-latest button) via HoughCircles across all placed "
@@ -414,7 +414,8 @@ def main() -> int:
                          "DEFAULT ON; opt out with --no-rescue-starved-circles.")
     ap.add_argument("--rescue-max-frames", type=int, default=24,
                     help="Cap on rescue frames decoded in the 2nd pipe pass. Default 24 "
-                         "(~80 MB of dyn-band RGB on lexiconv.mp4, ~1 s decode).")
+                         "(~80 MB of dyn-band RGB on lexi_iphone_messenger_all.mp4, "
+                         "~1 s decode).")
     ap.add_argument("--rescue-refine-offset", action=argparse.BooleanOptionalAction, default=True,
                     help="After decoding rescue frames, match each rescue band's luma row "
                          "profile against the nearest already-placed band to find the TRUE "

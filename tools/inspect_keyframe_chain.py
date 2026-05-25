@@ -1,6 +1,7 @@
 """Quick inspector: prints per-keyframe chain_dy / cumulative_y from keyframes.json.
 
-Run: python inspect_keyframe_chain.py [path_to_keyframes_json]
+Run: python inspect_keyframe_chain.py <path_to_keyframes_json>
+     (per-video convention: out/<video_basename>/keyframes.json)
 """
 from __future__ import annotations
 import json
@@ -9,7 +10,11 @@ from pathlib import Path
 
 
 def main() -> int:
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("out/keyframes.json")
+    if len(sys.argv) < 2:
+        print("usage: inspect_keyframe_chain.py <path_to_keyframes_json>",
+              file=sys.stderr)
+        return 2
+    p = Path(sys.argv[1])
     d = json.loads(p.read_text())
     dys = d["dy_series"]
     kfs = d["keyframes"]

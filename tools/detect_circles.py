@@ -5,7 +5,9 @@ with a wide radius sweep, and writes a JSON manifest of all detections plus a
 binned position-histogram so we can identify stable circular UI elements.
 
 Usage:
-    python tools/detect_circles.py --input lexiconv.mp4 --out out/circles \\
+    python tools/detect_circles.py --input lexi_iphone_messenger_all.mp4 \\
+        --keyframes out/lexi_iphone_messenger_all/keyframes.json \\
+        --out out/lexi_iphone_messenger_all/circles \\
         --frame-step 5 --min-r 20 --max-r 80
 """
 from __future__ import annotations
@@ -29,8 +31,9 @@ from video_io import (  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, type=Path)
-    ap.add_argument("--keyframes", type=Path, default=Path("out/keyframes.json"),
-                    help="Reads dyn_top / dyn_bot / w / h from this. Default out/keyframes.json")
+    ap.add_argument("--keyframes", required=True, type=Path,
+                    help="Reads dyn_top / dyn_bot / w / h from this. "
+                         "Per-video convention: out/<video_basename>/keyframes.json")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--frame-step", type=int, default=1,
                     help="Process every Nth frame (default 1 = every frame)")

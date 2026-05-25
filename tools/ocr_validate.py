@@ -6,7 +6,8 @@ crisp screen-rendered iOS text, which Windows OCR handles well.
 Process
 -------
 1. Decode the source video once and capture the RGB frame at every
-   keyframe index from out/keyframes.json. Pause-midpoint frames are the
+   keyframe index from <out_dir>/keyframes.json (per-video convention:
+   out/<video_basename>/keyframes.json). Pause-midpoint frames are the
    most stable (no motion blur).
 2. OCR each captured keyframe frame -> list of normalized lines.
 3. OCR each keyframe_chunk_*.png in the stitch directory -> list of

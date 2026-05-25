@@ -30,7 +30,8 @@ Outputs (all written under <out>/validation/):
   - summary.txt       : human-readable summary
 
 Run:
-  python tools/validate_stitch.py --input lexiconv.mp4 --out out
+  python tools/validate_stitch.py --input lexi_iphone_messenger_all.mp4 \\
+      --out out/lexi_iphone_messenger_all
 """
 
 from __future__ import annotations
