@@ -1,0 +1,38 @@
+Validator summary
+=================
+Source video    : lexiconv.mp4
+Stitch output   : strategy_a\out
+Frames validated: 3060
+Canvas size     : 28845 rows x 1126 cols
+Canvas top_y    : -27683
+
+Pair-overlap check (threshold MAD > 1.0):
+  bad pairs: 156
+    pair 2089->2097  dy=-133  overlap=836  mad=29.38
+    pair 1769->1791  dy=-91  overlap=878  mad=28.28
+    pair 1196->1222  dy=-24  overlap=945  mad=24.80
+    pair 1655->1658  dy=-160  overlap=809  mad=23.34
+    pair 2077->2078  dy=-17  overlap=952  mad=23.15
+    pair 1222->1223  dy=-18  overlap=951  mad=22.17
+    pair 1791->1792  dy=-14  overlap=955  mad=21.08
+    pair 2078->2079  dy=-17  overlap=952  mad=21.00
+    pair 1223->1224  dy=-18  overlap=951  mad=20.41
+    pair 2087->2088  dy=-30  overlap=939  mad=20.02
+
+Canvas-placement check (threshold MAD > 2.0, search_radius=100):
+  bad placements: 265
+    frame 1765  y_top=-12646  recorded_mad=24.43  best_d=-68 best_mad=22.54
+    frame 2080  y_top=-16935  recorded_mad=21.17  best_d=+0 best_mad=21.17
+    frame 2085  y_top=-16979  recorded_mad=20.89  best_d=+0 best_mad=20.89
+    frame 1195  y_top=-6835  recorded_mad=20.55  best_d=+0 best_mad=20.55
+    frame 1225  y_top=-6916  recorded_mad=19.76  best_d=-68 best_mad=19.67
+    frame 1190  y_top=-6815  recorded_mad=19.57  best_d=+0 best_mad=19.57
+    frame 1660  y_top=-11148  recorded_mad=19.15  best_d=+0 best_mad=19.15
+    frame 2100  y_top=-17252  recorded_mad=18.71  best_d=+0 best_mad=18.71
+    frame 1655  y_top=-10905  recorded_mad=18.44  best_d=+0 best_mad=18.44
+    frame 1795  y_top=-12818  recorded_mad=18.07  best_d=+0 best_mad=18.07
+
+Coverage:
+  rows with support=0 (true gap): 0
+  rows with support=1 (weak)    : 0
+  support min/mean/max          : 4 / 100.9 / 284

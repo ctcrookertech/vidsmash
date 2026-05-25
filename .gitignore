@@ -1,0 +1,43 @@
+# Source videos and other media — not committed (regeneratable inputs)
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.m4v
+
+# Generated stitch outputs (PNG chunks) — regenerate from video + keyframes.json
+strategy_a/out/*.png
+strategy_b/out/stitch/*.png
+out/stitch/*.png
+compare_out/*.png
+
+# Debug crops and intermediate frame extracts
+debug_overlays/
+debug_frames/
+debug/
+
+# Python build/cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Run logs
+*.log
+
+# Numba JIT cache
+__pycache__/
+.numba_cache/
