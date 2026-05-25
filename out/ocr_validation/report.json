@@ -1,0 +1,36 @@
+{
+  "source": {
+    "keyframes_sampled": 45,
+    "unique_lines": 390
+  },
+  "stitch": {
+    "chunks": 8,
+    "total_lines": 398,
+    "unique_lines": 396
+  },
+  "params": {
+    "min_line_len": 3,
+    "similarity_threshold": 85,
+    "min_dup_len": 8,
+    "fuzzy_engine": "rapidfuzz"
+  },
+  "comparison": {
+    "missing_from_stitch": 50,
+    "no_source_match": 75,
+    "duplicated_in_stitch": 2,
+    "recall_pct": 87.18,
+    "precision_pct": 81.06
+  },
+  "tokens": {
+    "source_vocab": 500,
+    "stitch_vocab": 540,
+    "source_occurrences": 905,
+    "stitch_occurrences": 982,
+    "shared_vocab": 456,
+    "only_in_source": 44,
+    "only_in_stitch": 84,
+    "vocab_recall_pct": 91.2,
+    "vocab_precision_pct": 84.44,
+    "over_repeated_count": 4
+  }
+}

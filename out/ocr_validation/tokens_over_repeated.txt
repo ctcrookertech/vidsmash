@@ -1,0 +1,4 @@
+src=  3 stitch=  6  because
+src=  1 stitch=  4  them
+src=  2 stitch=  4  didn't
+src=  1 stitch=  3  understand
