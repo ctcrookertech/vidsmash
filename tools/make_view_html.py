@@ -1,13 +1,10 @@
 """Emit a minimal view.html that vertically renders ordered chunk_*.png files.
 
-Generic helper used by all three output directories (strategy_a, strategy_b,
-compare_out). Picks files by glob, sorts them by filename, writes a
-1126-pixel-wide stack to view.html in the same directory.
+Generic helper used by output directories. Picks files by glob, sorts them
+by filename, writes a 1126-pixel-wide stack to view.html in the same dir.
 
 Usage:
-  python tools/make_view_html.py --dir strategy_a/out --glob "chunk_*.png" --title "Strategy A"
-  python tools/make_view_html.py --dir strategy_b/out/stitch --glob "keyframe_chunk_*.png" --title "Strategy B"
-  python tools/make_view_html.py --dir compare_out --glob "compare_preview.png" --title "A vs B preview" --width 800
+  python tools/make_view_html.py --dir out/stitch --glob "keyframe_chunk_*.png" --title "vidsmash"
 """
 
 from __future__ import annotations

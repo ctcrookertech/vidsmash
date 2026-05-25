@@ -45,7 +45,7 @@ from PIL import Image
 
 # Reuse ffmpeg helpers from the stitcher.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stitch_scroll import (  # type: ignore  # noqa: E402
+from video_io import (  # type: ignore  # noqa: E402
     _resolve_ffmpeg,
     close_proc,
     open_rgb_pipe,
@@ -384,9 +384,17 @@ def main() -> int:
     lines.append(f"Canvas-placement check (threshold MAD > {args.canvas_mad_warn}, search_radius={args.search_radius}):")
     lines.append(f"  bad placements: {len(bad_placements)}")
     if bad_placements:
-        worst = sorted(bad_placements, key=lambda x: -x["canvas_mad"])[:10]
+        def _cm(x: dict) -> float:
+            v = x.get("canvas_mad")
+            return float(v) if v is not None else float("-inf")
+        worst = sorted(bad_placements, key=lambda x: -_cm(x))[:10]
         for b in worst:
-            lines.append(f"    frame {b['i']}  y_top={b['y_top']}  recorded_mad={b['canvas_mad']:.2f}  best_d={b['best_dy_offset']:+d} best_mad={b['best_mad']:.2f}")
+            cm_s = f"{b['canvas_mad']:.2f}" if b.get("canvas_mad") is not None else "n/a"
+            bm_s = f"{b['best_mad']:.2f}" if b.get("best_mad") is not None else "n/a"
+            lines.append(
+                f"    frame {b['i']}  y_top={b['y_top']}  recorded_mad={cm_s}  "
+                f"best_d={b['best_dy_offset']:+d} best_mad={bm_s}"
+            )
     lines.append("")
     lines.append(f"Coverage:")
     lines.append(f"  rows with support=0 (true gap): {gap_rows}")

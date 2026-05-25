@@ -1,6 +1,6 @@
 {
   "input": "lexiconv.mp4",
-  "keyframes_json": "strategy_b\\out\\keyframes.json",
+  "keyframes_json": "out\\keyframes.json",
   "video": {
     "w": 1126,
     "h": 2436,
@@ -5299,42 +5299,42 @@
   "chunks": [
     {
       "index": 0,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_000.png",
+      "path": "out\\stitch\\keyframe_chunk_000.png",
       "height": 4096
     },
     {
       "index": 1,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_001.png",
+      "path": "out\\stitch\\keyframe_chunk_001.png",
       "height": 4096
     },
     {
       "index": 2,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_002.png",
+      "path": "out\\stitch\\keyframe_chunk_002.png",
       "height": 4096
     },
     {
       "index": 3,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_003.png",
+      "path": "out\\stitch\\keyframe_chunk_003.png",
       "height": 4096
     },
     {
       "index": 4,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_004.png",
+      "path": "out\\stitch\\keyframe_chunk_004.png",
       "height": 4096
     },
     {
       "index": 5,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_005.png",
+      "path": "out\\stitch\\keyframe_chunk_005.png",
       "height": 4096
     },
     {
       "index": 6,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_006.png",
+      "path": "out\\stitch\\keyframe_chunk_006.png",
       "height": 4096
     },
     {
       "index": 7,
-      "path": "strategy_b\\out\\stitch\\keyframe_chunk_007.png",
+      "path": "out\\stitch\\keyframe_chunk_007.png",
       "height": 2102
     }
   ]

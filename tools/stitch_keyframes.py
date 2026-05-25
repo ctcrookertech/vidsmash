@@ -1,8 +1,8 @@
-"""Stitch keyframes from detect_pauses_b_v2 into ordered vertical chunks.
+"""Stitch keyframes from detect_pauses into ordered vertical chunks.
 
 Algorithm
 ---------
-1. Load keyframes.json (produced by detect_pauses_b_v2.py). It carries:
+1. Load keyframes.json (produced by detect_pauses.py). It carries:
      - dy_series: per-frame velocity (cur vs prev)
      - keyframes: representative frames for each pause group
      - pauses, between_runs, drag_suspect flags
@@ -45,7 +45,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stitch_scroll_b import (  # type: ignore  # noqa: E402
+from video_io import (  # type: ignore  # noqa: E402
     ChunkWriter,
     _resolve_ffmpeg,
     close_proc,
@@ -84,9 +84,9 @@ def select_bridge_frames(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", required=True, type=Path,
-                    help="Source video (same one passed to detect_pauses_b_v2).")
+                    help="Source video (same one passed to detect_pauses).")
     ap.add_argument("--keyframes", required=True, type=Path,
-                    help="Path to keyframes.json from detect_pauses_b_v2.")
+                    help="Path to keyframes.json from detect_pauses.")
     ap.add_argument("--out", required=True, type=Path,
                     help="Output directory for chunk PNGs and report.json.")
     ap.add_argument("--chunk-height", type=int, default=4096,

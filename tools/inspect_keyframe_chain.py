@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("strategy_b/out/keyframes.json")
+    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("out/keyframes.json")
     d = json.loads(p.read_text())
     dys = d["dy_series"]
     kfs = d["keyframes"]
