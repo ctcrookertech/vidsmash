@@ -86,6 +86,131 @@ def select_bridge_frames(
     return bridges
 
 
+def _plan_rescue_frames(
+    placements: list[dict], dys: list[int], dyn_h: int,
+    spec_cy: int, spec_r: int, circle_pad: int,
+    max_rescue: int,
+) -> tuple[dict[int, tuple[int, int]], list[tuple[int, int]]]:
+    """Identify canvas zones where every covering band's spec disc lands in
+    the zone (button-starved), then pick rescue frame indices whose disc lies
+    OUTSIDE each starved zone but whose dyn band still covers the zone.
+
+    Returns ({rescue_frame_idx: (zone_start_canvas_y, zone_end_canvas_y)},
+            starved_zones_canvas_y).
+
+    Each rescue frame is bonded to ONE zone. Per-band masking later restricts
+    the rescue band's clean contribution to the band-y rows that cover its
+    zone, so its (possibly drift-misaligned) content cannot ghost-overlap
+    crisp text at rows already filled by pause-aligned placements.
+
+    Rescue eligibility for a zone [s, e] in absolute canvas-y:
+      - cum_y_canvas[F] <= s AND cum_y_canvas[F] + dyn_h - 1 >= e (covers zone)
+      - button below zone (button_top > e) OR button above zone (button_bot < s)
+      - 0 <= cum_y_canvas[F] <= max_abs (do not grow canvas)
+    """
+    if not placements:
+        return {}, []
+    cum_y_full = np.concatenate([[0], np.cumsum(np.asarray(dys[1:], dtype=np.int64))])
+    n_frames = cum_y_full.shape[0]
+
+    placed_cum = np.asarray([p["cum_y"] for p in placements], dtype=np.int64)
+    placed_i = np.asarray([p["i"] for p in placements], dtype=np.int64)
+    min_y = int(placed_cum.min())
+    abs_y = placed_cum - min_y
+    max_abs = int(abs_y.max())
+    canvas_h = max_abs + dyn_h
+
+    button_y_lo = max(0, spec_cy - spec_r - circle_pad)
+    button_y_hi = min(dyn_h - 1, spec_cy + spec_r + circle_pad)
+
+    cover_count = np.zeros(canvas_h, dtype=np.int32)
+    button_count = np.zeros(canvas_h, dtype=np.int32)
+    for ay in abs_y:
+        cover_count[int(ay):int(ay) + dyn_h] += 1
+        bb0 = int(ay) + button_y_lo
+        bb1 = int(ay) + button_y_hi + 1
+        if bb0 < canvas_h and bb1 > 0:
+            button_count[max(0, bb0):min(canvas_h, bb1)] += 1
+
+    starved = (cover_count > 0) & (cover_count == button_count)
+    if not starved.any():
+        return {}, []
+
+    zones: list[tuple[int, int]] = []
+    in_zone = False
+    z0 = 0
+    for y in range(canvas_h):
+        if starved[y] and not in_zone:
+            in_zone = True
+            z0 = y
+        elif not starved[y] and in_zone:
+            in_zone = False
+            zones.append((z0, y - 1))
+    if in_zone:
+        zones.append((z0, canvas_h - 1))
+
+    placed_set = set(int(i) for i in placed_i.tolist())
+    rescue: dict[int, tuple[int, int]] = {}
+
+    cum_y_canvas = cum_y_full - min_y
+
+    for (zs, ze) in zones:
+        zs_abs = zs
+        ze_abs = ze
+        cov_mask = (cum_y_canvas <= zs_abs) & (cum_y_canvas + dyn_h - 1 >= ze_abs)
+        button_top = cum_y_canvas + button_y_lo
+        button_bot = cum_y_canvas + button_y_hi
+        outside_zone = (button_bot < zs_abs) | (button_top > ze_abs)
+        no_grow = (cum_y_canvas >= 0) & (cum_y_canvas <= max_abs)
+        elig = cov_mask & outside_zone & no_grow
+        cand = np.where(elig)[0].tolist()
+        cand = [c for c in cand if c not in placed_set and c not in rescue]
+        if not cand:
+            continue
+        cand_arr = np.asarray(cand, dtype=np.int64)
+        zone_mid_canvas = (zs_abs + ze_abs) // 2
+        dist = np.abs((cum_y_canvas[cand_arr] + dyn_h // 2) - zone_mid_canvas)
+        order = np.argsort(dist)
+        for k in order:
+            f = int(cand_arr[k])
+            if len(rescue) >= max_rescue:
+                break
+            rescue[f] = (int(zs_abs), int(ze_abs))
+            break
+        if len(rescue) >= max_rescue:
+            break
+
+    return rescue, zones
+
+
+def _decode_specific_frames(
+    ffmpeg: str, video: Path, frame_indices: list[int],
+    W: int, dyn_h: int, dyn_top: int,
+) -> dict[int, np.ndarray]:
+    """Decode a set of specific frames via ffmpeg select filter, return
+    {frame_index: HxWx3 uint8 RGB band}. Indices read in input (sorted) order;
+    we re-pair them to the sorted index list."""
+    if not frame_indices:
+        return {}
+    sorted_idx = sorted(set(int(i) for i in frame_indices))
+    select_expr = "+".join(f"eq(n\\,{f})" for f in sorted_idx)
+    proc = open_rgb_pipe(
+        ffmpeg, video, pix_fmt="rgb24",
+        crop=(W, dyn_h, 0, dyn_top), select_expr=select_expr,
+    )
+    frame_bytes = W * dyn_h * 3
+    out: dict[int, np.ndarray] = {}
+    try:
+        for f in sorted_idx:
+            buf = read_frame(proc, frame_bytes)
+            if buf is None:
+                break
+            out[f] = np.frombuffer(buf, dtype=np.uint8).reshape(dyn_h, W, 3).copy()
+    finally:
+        close_proc(proc)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", required=True, type=Path,
@@ -168,13 +293,14 @@ def main() -> int:
                     help="Background colour for the scrollbar rim fill. 'auto' (default) "
                          "uses the modal pixel of the rightmost 1-px column. Or pass "
                          "'R,G,B' (e.g. '0,0,0') to force a specific colour.")
-    ap.add_argument("--clear-beyond-bubble-extent", action="store_true",
+    ap.add_argument("--clear-beyond-bubble-extent", action=argparse.BooleanOptionalAction, default=True,
                     help="After all fill passes, use OpenCV Canny edge detection to find "
                          "the leftmost/rightmost bubble edge per row in each placed band, "
                          "aggregate across covering bands, and force-fill canvas pixels "
                          "beyond those extents with the gutter background colour. This "
                          "removes wrong-colour gutter pixels that pass 2 can fabricate at "
-                         "the canvas left/right edges. Requires opencv-python.")
+                         "the canvas left/right edges. Requires opencv-python. "
+                         "DEFAULT ON; opt out with --no-clear-beyond-bubble-extent.")
     ap.add_argument("--bubble-extent-pad", type=int, default=0,
                     help="Number of pixels to keep beyond the detected bubble edge before "
                          "starting the gutter fill. Default 0 (pixel-perfect right at the "
@@ -218,7 +344,7 @@ def main() -> int:
                          "be reported as a bubble R. -1 (default) means W-16. Set to W "
                          "(e.g. 1126) to disable. The post-detection clamp "
                          "(--bubble-extent-r-max) remains active as defense-in-depth.")
-    ap.add_argument("--bubble-extent-synthetic-aa", action="store_true",
+    ap.add_argument("--bubble-extent-synthetic-aa", action=argparse.BooleanOptionalAction, default=True,
                     help="After pass-7 clearing, repaint the rightmost 3 columns of every "
                          "bubble with iOS-native AA gradient (90 -> 63 -> 19 -> 1 -> 0 in "
                          "luma-90-bubble terms; bubble*ratio + bg*(1-ratio) per pixel using "
@@ -227,13 +353,20 @@ def main() -> int:
                          "where R-3 is bg-coloured (rounded corners, max-pool-raised rows "
                          "without a real bubble at that R) are skipped via the AA threshold. "
                          "Fixes the 'hard mechanical edge' look from pass-1 sub-pixel-mean "
-                         "smearing.")
+                         "smearing. DEFAULT ON; opt out with --no-bubble-extent-synthetic-aa.")
     ap.add_argument("--bubble-extent-aa-threshold", type=int, default=30,
                     help="Per-row luma distance from bg required at x=R-3 for synthetic AA "
                          "to apply on that row. Below this, the row has no bubble content at "
                          "the detected extent (corner / spurious R) and AA is skipped. "
                          "Default 30 is comfortably below all iOS bubble colours vs black bg.")
-    ap.add_argument("--mask-detected-circles", action="store_true",
+    ap.add_argument("--bubble-extent-aa-inset", type=int, default=1,
+                    help="Shave N pixels off the right bubble edge before clearing AND "
+                         "AA-painting. Pass-7 clears x > (R - inset) + pad and pass-7b paints "
+                         "AA at x = (R - inset - 2), (R - inset - 1), (R - inset). Use 1 to "
+                         "remove a residual 1-px bubble extension past the visually-perceived "
+                         "edge that the detector reports. Default 1 (validated on lexiconv.mp4); "
+                         "set 0 to disable the shave.")
+    ap.add_argument("--mask-detected-circles", action=argparse.BooleanOptionalAction, default=True,
                     help="Auto-discover screen-fixed circular overlays (e.g. iOS "
                          "scroll-to-latest button) via HoughCircles across all placed "
                          "bands, then per-band redetect inside a tight ROI and add the "
@@ -241,7 +374,8 @@ def main() -> int:
                          "median both ignore that band's pixels at those positions, so "
                          "bands without the button at the canonical position still "
                          "contribute clean conversation content. Eliminates the dark "
-                         "ghost left by partial averaging of the button.")
+                         "ghost left by partial averaging of the button. "
+                         "DEFAULT ON; opt out with --no-mask-detected-circles.")
     ap.add_argument("--circle-min-prevalence", type=float, default=0.4,
                     help="Discovery threshold: a (cx,cy) bin must appear in this fraction "
                          "of placed bands to be promoted to a tracked overlay. Lower = "
@@ -269,6 +403,50 @@ def main() -> int:
     ap.add_argument("--circle-slack-r", type=int, default=4,
                     help="Per-band detection allowed radius deviation from the discovered "
                          "r (px). Default 4.")
+    ap.add_argument("--rescue-starved-circles", action=argparse.BooleanOptionalAction, default=True,
+                    help="After discovering tracked circular overlays, identify canvas zones "
+                         "where EVERY covering band has the spec disc at that canvas-y "
+                         "(starved: pass-1 has no clean candidate, pass-2 median is all-overlay, "
+                         "pass-4 Telea inpaint smears nearby text). Decode a 2nd pipe pass of "
+                         "extra frames whose button sits at a DIFFERENT canvas-y, append them "
+                         "to placements so they contribute clean text content at the starved "
+                         "rows. Requires --mask-detected-circles. "
+                         "DEFAULT ON; opt out with --no-rescue-starved-circles.")
+    ap.add_argument("--rescue-max-frames", type=int, default=24,
+                    help="Cap on rescue frames decoded in the 2nd pipe pass. Default 24 "
+                         "(~80 MB of dyn-band RGB on lexiconv.mp4, ~1 s decode).")
+    ap.add_argument("--rescue-refine-offset", action=argparse.BooleanOptionalAction, default=True,
+                    help="After decoding rescue frames, match each rescue band's luma row "
+                         "profile against the nearest already-placed band to find the TRUE "
+                         "vertical offset (dys-based cum_y accumulates drift error of a few "
+                         "px to a few rows over long scroll runs; that's exactly what makes "
+                         "rescue text appear shifted vertically vs canvas neighbour content). "
+                         "Updates the rescue placement's cum_y/abs_y to anchor.cum_y + p_match. "
+                         "DEFAULT ON; opt out with --no-rescue-refine-offset.")
+    ap.add_argument("--rescue-refine-search-radius", type=int, default=80,
+                    help="Vertical search radius (px) for rescue-offset refinement around the "
+                         "predicted dys-cum_y delta. Default 80 (~4 text lines). Increase if "
+                         "rescue corrections appear to be clipped at the cap.")
+    ap.add_argument("--seam-line-fix", action=argparse.BooleanOptionalAction, default=True,
+                    help="Pass-9: remove thin 1-2 row horizontal off-colour seam lines inside "
+                         "detected bubble interiors that survive pass-1/pass-2 (typically "
+                         "produced when pass-1 averaged across slightly mis-aligned bands at "
+                         "a row boundary). For each pixel inside [L+pad, R-pad], if vertical "
+                         "neighbours agree (|up-down|<tau_neighbor) AND central differs from "
+                         "both (>tau_central), replace with mean(up, down). Two iterations "
+                         "to catch 2-row seams. Text pixels naturally survive (their vertical "
+                         "neighbours are also text). DEFAULT ON; opt out with --no-seam-line-fix.")
+    ap.add_argument("--seam-line-tau-neighbor", type=int, default=18,
+                    help="Max sum-of-abs-diff RGB distance between (Y-1, x) and (Y+1, x) to "
+                         "consider them 'agreeing neighbours' for pass-9 seam fix. Default 18.")
+    ap.add_argument("--seam-line-tau-central", type=int, default=36,
+                    help="Min sum-of-abs-diff RGB distance from (Y, x) to BOTH neighbours to "
+                         "consider it an anomalous seam pixel for pass-9. Default 36.")
+    ap.add_argument("--seam-line-edge-pad", type=int, default=6,
+                    help="Inset (px) from L and R into the bubble interior before applying "
+                         "pass-9 seam fix. Avoids touching the AA fringe. Default 6.")
+    ap.add_argument("--seam-line-iters", type=int, default=2,
+                    help="Number of pass-9 iterations. Default 2 (catches 1-2 row seams).")
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -480,6 +658,9 @@ def main() -> int:
     circle_specs: list = []
     circle_discovery_report: dict | None = None
     circle_per_band_report: dict | None = None
+    rescue_report: dict | None = None
+    rescue_refine_report: dict | None = None
+    seam_report: dict | None = None
     if args.mask_detected_circles:
         t0 = time.perf_counter()
         unique_bands = list({p["i"] for p in placements})
@@ -498,6 +679,189 @@ def main() -> int:
         for s in circle_specs:
             print(f"[circles]   cx={s.cx} cy={s.cy} r={s.r}  "
                   f"prevalence={s.prevalence:.3f}  r_range=[{s.r_min}..{s.r_max}]")
+
+        rescue_report = None
+        if args.rescue_starved_circles and circle_specs:
+            spec = circle_specs[0]
+            t_resc = time.perf_counter()
+            rescue_map, starved_zones = _plan_rescue_frames(
+                placements, dys, dyn_h,
+                spec.cy, spec.r, args.circle_pad,
+                args.rescue_max_frames,
+            )
+            rescue_indices = list(rescue_map.keys())
+            n_planned = len(rescue_indices)
+            n_zones = len(starved_zones)
+            zone_rows = sum((e - s + 1) for (s, e) in starved_zones)
+            added = 0
+            if rescue_indices:
+                new_bands = _decode_specific_frames(
+                    ffmpeg, args.input, rescue_indices, W, dyn_h, dyn_top,
+                )
+                cum_y_full = np.concatenate(
+                    [[0], np.cumsum(np.asarray(dys[1:], dtype=np.int64))]
+                )
+                # Cum_y refinement: dys accumulates 0..2 px drift over each
+                # frame; over a 1000-frame distance that's 1-3 text lines.
+                # Pause-midpoint placements come from RUNS where dy~0 over many
+                # frames so they are drift-free in absolute cum_y. Rescue frames
+                # are picked from BETWEEN pauses where the snapshot dys[f] may
+                # be a noisy small-motion value, so cum_y_full[f] inherits all
+                # accumulated drift since frame 0. We anchor each rescue's
+                # cum_y to its nearest already-placed (pause-midpoint) band via
+                # luma-row match.
+                refine_on = bool(args.rescue_refine_offset)
+                refine_r = max(4, int(args.rescue_refine_search_radius))
+                refine_stats = []
+                refine_n_ok = 0
+                refine_n_skip = 0
+                # Pre-compute placement luma row profiles for anchors
+                # (only those whose band is already decoded -- i.e., all current
+                # placements). Cheap: dyn_h floats per band.
+                anchor_profiles: dict[int, np.ndarray] = {}
+                if refine_on:
+                    for p_anc in placements:
+                        bi = p_anc["i"]
+                        if bi in anchor_profiles:
+                            continue
+                        band = rgb_bands.get(bi)
+                        if band is None:
+                            continue
+                        anchor_profiles[bi] = (
+                            band.astype(np.float32).mean(axis=2).mean(axis=1)
+                        )
+                for f in rescue_indices:
+                    if f not in new_bands or f in rgb_bands:
+                        continue
+                    rgb_bands[f] = new_bands[f]
+                    cur_cum_y = int(cum_y_full[f])
+                    if refine_on and placements:
+                        # Pick anchor with smallest |cum_y delta| AND keep |delta|
+                        # small enough that band-y overlap (= dyn_h - |delta|)
+                        # leaves enough rows for a confident match.
+                        # Prefer anchors that are STRICT pause-midpoint sources
+                        # (i.e. source == "pause" or "keyframe") over bridges
+                        # which are themselves dys-derived and may carry drift.
+                        def _anchor_score(q):
+                            d = abs(int(q["cum_y"]) - cur_cum_y)
+                            src = q.get("source", "")
+                            # prefer pause/keyframe by penalising bridge by +1
+                            src_bias = 0 if src in ("pause", "keyframe") else 1
+                            return (d, src_bias)
+                        anchor = min(placements, key=_anchor_score)
+                        a_cum_y = int(anchor["cum_y"])
+                        a_band_i = int(anchor["i"])
+                        a_prof = anchor_profiles.get(a_band_i)
+                        pred_p = cur_cum_y - a_cum_y
+                        # Need at least 25% of dyn_h overlapping for a usable
+                        # match (= dyn_h - |pred_p| - refine_r > dyn_h//4).
+                        min_useful_overlap = max(96, dyn_h // 4)
+                        max_pred_p = dyn_h - min_useful_overlap - refine_r
+                        if a_prof is not None and abs(pred_p) <= max_pred_p:
+                            rescue_prof = (
+                                new_bands[f]
+                                .astype(np.float32)
+                                .mean(axis=2)
+                                .mean(axis=1)
+                            )
+                            res = match_1d_offset(
+                                ref=a_prof,
+                                cur=rescue_prof,
+                                predicted_p=pred_p,
+                                search_radius=refine_r,
+                                min_overlap=min_useful_overlap,
+                                prior_alpha=0.05,
+                            )
+                            true_p = int(res.p)
+                            correction = true_p - pred_p
+                            # Accept only if correction is within search radius
+                            # AND the match has at least min_useful_overlap rows
+                            # (i.e. match_1d_offset returned a valid alignment).
+                            if (abs(correction) <= refine_r
+                                    and res.overlap >= min_useful_overlap):
+                                new_cum_y = a_cum_y + true_p
+                                refine_stats.append({
+                                    "rescue_i": int(f),
+                                    "anchor_i": a_band_i,
+                                    "anchor_source": str(anchor.get("source", "")),
+                                    "predicted_delta": int(pred_p),
+                                    "true_delta": int(true_p),
+                                    "correction_px": int(correction),
+                                    "sad": float(res.sad),
+                                    "overlap": int(res.overlap),
+                                    "confidence": float(res.confidence),
+                                })
+                                cur_cum_y = int(new_cum_y)
+                                refine_n_ok += 1
+                            else:
+                                refine_n_skip += 1
+                        else:
+                            refine_n_skip += 1
+                    placements.append({
+                        "i": int(f),
+                        "cum_y": cur_cum_y,
+                        "source": "rescue",
+                        "pause_index": -1,
+                        "drag_suspect": False,
+                        "rescue_zone_canvas": [int(rescue_map[f][0]),
+                                                int(rescue_map[f][1])],
+                    })
+                    wanted.add(int(f))
+                    added += 1
+                if refine_on:
+                    if refine_stats:
+                        corr_arr = np.asarray(
+                            [s["correction_px"] for s in refine_stats]
+                        )
+                        print(f"[rescue] cum_y refinement: applied to {refine_n_ok}, "
+                              f"skipped {refine_n_skip}, "
+                              f"|correction| min={int(np.abs(corr_arr).min())} "
+                              f"med={int(np.median(np.abs(corr_arr)))} "
+                              f"max={int(np.abs(corr_arr).max())} px")
+                        rescue_refine_report = {
+                            "applied": int(refine_n_ok),
+                            "skipped": int(refine_n_skip),
+                            "search_radius_px": int(refine_r),
+                            "abs_correction_min_px": int(np.abs(corr_arr).min()),
+                            "abs_correction_med_px": int(np.median(np.abs(corr_arr))),
+                            "abs_correction_max_px": int(np.abs(corr_arr).max()),
+                            "stats": refine_stats,
+                        }
+                    else:
+                        print(f"[rescue] cum_y refinement: skipped all "
+                              f"({refine_n_skip}); no anchors or low overlap")
+                        rescue_refine_report = {
+                            "applied": 0,
+                            "skipped": int(refine_n_skip),
+                            "search_radius_px": int(refine_r),
+                            "stats": [],
+                        }
+                if added > 0:
+                    min_y_new = min(p["cum_y"] for p in placements)
+                    for p in placements:
+                        p["abs_y"] = p["cum_y"] - min_y_new
+                    placements_sorted = sorted(placements, key=lambda p: p["abs_y"])
+                    canvas_h_new = max(p["abs_y"] for p in placements_sorted) + dyn_h
+                    if canvas_h_new != canvas_h:
+                        print(f"[rescue] WARN: canvas_h grew {canvas_h} -> "
+                              f"{canvas_h_new}; expected unchanged")
+                        canvas_h = canvas_h_new
+                    unique_bands = list({p["i"] for p in placements})
+            rescue_report = {
+                "wall_s": round(time.perf_counter() - t_resc, 3),
+                "n_starved_zones": int(n_zones),
+                "starved_canvas_rows": int(zone_rows),
+                "n_rescue_planned": int(n_planned),
+                "n_rescue_added": int(added),
+                "max_rescue_frames": int(args.rescue_max_frames),
+                "spec_cy": int(spec.cy),
+                "spec_r": int(spec.r),
+                "circle_pad": int(args.circle_pad),
+            }
+            print(f"[rescue] zones={n_zones} ({zone_rows} canvas rows)  "
+                  f"planned={n_planned}  added={added} new placements  "
+                  f"({time.perf_counter() - t_resc:.2f}s)")
+
         if circle_specs:
             t1 = time.perf_counter()
             # Strategy: for every placed band, OR together
@@ -548,6 +912,51 @@ def main() -> int:
                         })
                 per_band_extra_mask[i] = acc_mask
                 per_band_hits[i] = hits_this_band
+
+            # Surgical rescue: for each rescue placement, restrict its clean
+            # contribution to the band-y rows AND filled-disc footprint that
+            # covers its assigned starved zone. Other x-columns at zone canvas-y
+            # are NOT starved (the button is a circular disc; clean text from
+            # other bands fills the rest), so allowing rescue to contribute
+            # there would mix its (possibly drift-misaligned) text into already-
+            # correct text. Using the ACTUAL disc shape (not the rect bbox)
+            # avoids painting rescue into the corners of the disc bbox where
+            # the disc itself is not present.
+            rescue_band_restrict = 0
+            # Disc footprint (relative to band-y=spec.cy) - one mask per spec
+            spec_disc_masks = [
+                _filled_disk_mask((dyn_h, W), s.cx, s.cy, s.r + args.circle_pad)
+                for s in circle_specs
+            ]
+            for p in placements:
+                if p.get("source") != "rescue":
+                    continue
+                zone = p.get("rescue_zone_canvas")
+                if not zone:
+                    continue
+                zs_abs, ze_abs = int(zone[0]), int(zone[1])
+                ay = int(p["abs_y"])
+                bs = max(0, zs_abs - ay)
+                be = min(dyn_h - 1, ze_abs - ay)
+                if be < bs:
+                    continue
+                # Start with full "clean" (= True everywhere) then carve out
+                # the disc-shaped footprint at the band rows that align with
+                # the assigned starved zone. Outside that vertical band, the
+                # full mask remains True so the band acts as a normal clean
+                # contributor (it's a real frame -- can help everywhere).
+                new_mask = np.ones((dyn_h, W), dtype=bool)
+                row_slice = slice(bs, be + 1)
+                for spec_mask in spec_disc_masks:
+                    # Restrict the in-zone band rows to NOT include any column
+                    # outside the actual disc footprint at those rows.
+                    new_mask[row_slice] &= ~spec_mask[row_slice]
+                per_band_extra_mask[p["i"]] = new_mask
+                rescue_band_restrict += 1
+            if rescue_band_restrict > 0:
+                print(f"[circles] surgical rescue: restricted clean contribution to "
+                      f"in-zone band rows x filled-disc footprint on "
+                      f"{rescue_band_restrict} rescue bands")
             n_bands_with_hit = sum(1 for v in per_band_hits.values() if v > 0)
             tot_pixels_masked = int(sum(m.sum() for m in per_band_extra_mask.values()))
             spec_disc_only_px = sum(
@@ -601,6 +1010,12 @@ def main() -> int:
         for p in placements:
             i = p["i"]
             if i in band_R:
+                continue
+            if p.get("source") == "rescue":
+                # Rescue bands are surgical (clean only in starved-zone rows
+                # via per-band mask). Letting their per-row R/L feed the
+                # canvas extent max-pool would propagate misaligned bubble
+                # edges to rows already correctly resolved by pause bands.
                 continue
             _, R_arr, L_arr = detect_band_extents(
                 rgb_bands[i],
@@ -669,7 +1084,7 @@ def main() -> int:
         np.add(canvas_acc[y0:y1], band, where=eff_clean_3, out=canvas_acc[y0:y1])
         clean_count[y0:y1] += eff_clean_i16
         total_count[y0:y1] += 1
-        if args.clear_beyond_bubble_extent:
+        if args.clear_beyond_bubble_extent and p.get("source") != "rescue":
             R_b = band_R[p["i"]]
             L_b = band_L[p["i"]]
             valid_R = R_b >= 0
@@ -1014,8 +1429,15 @@ def main() -> int:
             canvas_R = canvas_R_smoothed
 
         # Right side: clear where x > canvas_R + pad (only where canvas_R is valid)
+        # AA-inset shaves N px off the perceived bubble right edge to remove a
+        # residual 1-px extension the detector reports past the visual edge.
+        # Applied to BOTH the clear (R - inset + pad) and the AA recipe below
+        # so the cleared and AA-painted regions stay coherent.
+        aa_inset = max(0, int(args.bubble_extent_aa_inset))
         valid_R_rows = canvas_R >= 0
-        R_thresh = np.where(valid_R_rows, canvas_R + pad, W).astype(np.int32)
+        R_thresh = np.where(
+            valid_R_rows, canvas_R - aa_inset + pad, W
+        ).astype(np.int32)
         clear_R = (x_idx > R_thresh[:, None]) & valid_R_rows[:, None]
 
         # Left side: clear where x < canvas_L - pad (only where canvas_L was set < W).
@@ -1087,11 +1509,18 @@ def main() -> int:
         # R extent) so we never paint AA into empty gutter.
         if args.bubble_extent_synthetic_aa:
             t0_aa = time.perf_counter()
+            # Anchor the AA recipe at R_eff = R - aa_inset. Sample bubble RGB
+            # at R_eff - 3 (a column still solidly inside the bubble fill) and
+            # paint columns R_eff-2 / R_eff-1 / R_eff with ratios 0.70 / 0.20
+            # / 0.01. With aa_inset=1, this paints R-3 / R-2 / R-1 (one pixel
+            # left of the previous recipe) and pass-7's clear above already
+            # blanked column R.
             aa_recipe = [(2, 0.70), (1, 0.20), (0, 0.01)]
             bg_rgb_f = ext_bg.astype(np.float32)
             bg_luma = 0.299 * bg_rgb_f[0] + 0.587 * bg_rgb_f[1] + 0.114 * bg_rgb_f[2]
-            valid_aa = valid_R_rows & (canvas_R >= 3) & (canvas_R < W)
-            R_safe = np.where(valid_aa, canvas_R, 3).astype(np.int32)
+            R_eff = canvas_R - aa_inset
+            valid_aa = valid_R_rows & (R_eff >= 3) & (R_eff < W)
+            R_safe = np.where(valid_aa, R_eff, 3).astype(np.int32)
             sample_x = np.clip(R_safe - 3, 0, W - 1)
             y_indices = np.arange(canvas_h, dtype=np.int32)
             bubble_rgb_per_row = canvas[..., :3][y_indices, sample_x].astype(np.float32)
@@ -1120,14 +1549,80 @@ def main() -> int:
                 aa_pixels_painted += int(col_valid.sum())
             extent_clear_report["synthetic_aa_rows"] = aa_rows_painted
             extent_clear_report["synthetic_aa_pixels"] = aa_pixels_painted
+            extent_clear_report["synthetic_aa_inset"] = int(aa_inset)
             extent_clear_report["synthetic_aa_wall_s"] = round(
                 time.perf_counter() - t0_aa, 3
             )
             print(f"[stitch] pass7b (synthetic-AA) rows={aa_rows_painted}/{rows_with_R} "
                   f"pixels={aa_pixels_painted} "
-                  f"(recipe ratios 0.70/0.20/0.01 at R-2/R-1/R, "
-                  f"threshold={args.bubble_extent_aa_threshold}) "
+                  f"(recipe ratios 0.70/0.20/0.01 at R_eff-2/R_eff-1/R_eff "
+                  f"where R_eff=R-{aa_inset}, threshold={args.bubble_extent_aa_threshold}) "
                   f"in {extent_clear_report['synthetic_aa_wall_s']:.2f}s")
+
+        # --- pass 9: thin horizontal seam-line cleanup inside bubble interiors ---
+        # Some bubble interiors retain thin 1-2 row off-colour seam bands where
+        # pass-1 averaged across slightly mis-aligned bands at a row boundary.
+        # For each pixel inside [L+pad .. R-pad], if its vertical neighbours
+        # agree (sum-abs-diff < tau_neighbor) AND it differs from BOTH neighbours
+        # (>= tau_central), replace it with mean(up, down). Text pixels naturally
+        # survive because their vertical neighbours are also text (not agreeing).
+        # Two iterations catches 2-row seams. Bubble interior restriction
+        # (canvas_L/canvas_R) prevents the pass from touching black background
+        # or AA fringe.
+        if (args.seam_line_fix
+                and canvas_R is not None and canvas_L is not None
+                and canvas_h >= 3):
+            t0_seam = time.perf_counter()
+            tau_n = max(0, int(args.seam_line_tau_neighbor))
+            tau_c = max(0, int(args.seam_line_tau_central))
+            edge_pad = max(0, int(args.seam_line_edge_pad))
+            n_iters = max(1, int(args.seam_line_iters))
+            rgb_view = canvas[..., :3]
+            x_idx_full = np.arange(W, dtype=np.int32)
+            inner_y = np.arange(1, canvas_h - 1, dtype=np.int32)
+            L_y = canvas_L[inner_y]
+            R_y = canvas_R[inner_y]
+            valid_bubble = (R_y >= 0) & (L_y < W) & ((R_y - L_y) > 2 * edge_pad + 4)
+            bubble_col_mask = (
+                (x_idx_full[None, :] >= (L_y[:, None] + edge_pad))
+                & (x_idx_full[None, :] <= (R_y[:, None] - edge_pad))
+                & valid_bubble[:, None]
+            )
+            seam_total_fixed = 0
+            seam_per_iter = []
+            for it in range(n_iters):
+                up = rgb_view[:-2].astype(np.int16)
+                cur = rgb_view[1:-1].astype(np.int16)
+                down = rgb_view[2:].astype(np.int16)
+                d_nbr = np.abs(up - down).sum(axis=2)
+                d_up = np.abs(cur - up).sum(axis=2)
+                d_dn = np.abs(cur - down).sum(axis=2)
+                anomaly = (d_nbr <= tau_n) & (np.minimum(d_up, d_dn) >= tau_c)
+                anomaly &= bubble_col_mask
+                fix_count = int(anomaly.sum())
+                if fix_count == 0:
+                    seam_per_iter.append(0)
+                    break
+                mean_rgb = ((up + down) // 2).astype(np.uint8)
+                inner_view = rgb_view[1:-1]
+                inner_view[anomaly] = mean_rgb[anomaly]
+                seam_total_fixed += fix_count
+                seam_per_iter.append(fix_count)
+            seam_report = {
+                "wall_s": round(time.perf_counter() - t0_seam, 3),
+                "total_fixed": int(seam_total_fixed),
+                "per_iter": [int(n) for n in seam_per_iter],
+                "tau_neighbor": tau_n,
+                "tau_central": tau_c,
+                "edge_pad": edge_pad,
+                "iters": n_iters,
+            }
+            print(f"[stitch] pass9 (seam-line fix) total={seam_total_fixed} px "
+                  f"per_iter={seam_per_iter} "
+                  f"(tau_n={tau_n}, tau_c={tau_c}, edge_pad={edge_pad}) "
+                  f"in {seam_report['wall_s']:.2f}s")
+        else:
+            seam_report = None
 
 
     if overlay_report is not None:
@@ -1211,6 +1706,18 @@ def main() -> int:
             "bubble_extent_smooth_radius": args.bubble_extent_smooth_radius,
             "bubble_extent_r_max": args.bubble_extent_r_max,
             "bubble_detector_r_exclude_from": args.bubble_detector_r_exclude_from,
+            "bubble_extent_synthetic_aa": args.bubble_extent_synthetic_aa,
+            "bubble_extent_aa_threshold": args.bubble_extent_aa_threshold,
+            "bubble_extent_aa_inset": args.bubble_extent_aa_inset,
+            "mask_detected_circles": args.mask_detected_circles,
+            "rescue_starved_circles": args.rescue_starved_circles,
+            "rescue_refine_offset": args.rescue_refine_offset,
+            "rescue_refine_search_radius": args.rescue_refine_search_radius,
+            "seam_line_fix": args.seam_line_fix,
+            "seam_line_tau_neighbor": args.seam_line_tau_neighbor,
+            "seam_line_tau_central": args.seam_line_tau_central,
+            "seam_line_edge_pad": args.seam_line_edge_pad,
+            "seam_line_iters": args.seam_line_iters,
         },
         "n_keyframes": len(kfs),
         "n_bridges": bridge_count,
@@ -1223,6 +1730,9 @@ def main() -> int:
         "circle_discovery": circle_discovery_report,
         "circle_per_band": circle_per_band_report,
         "circle_specs": [s.to_dict() for s in circle_specs] if circle_specs else [],
+        "rescue_starved": rescue_report,
+        "rescue_refine": rescue_refine_report,
+        "seam_line_fix": seam_report,
         "scrollbar_rim_report": scrollbar_report,
         "bubble_extents_report": extents_report,
         "extent_clear_report": extent_clear_report,

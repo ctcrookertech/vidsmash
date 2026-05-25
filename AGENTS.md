@@ -64,6 +64,26 @@ python tools/validate_stitch.py  --input lexiconv.mp4 --out out/stitch
 python tools/make_view_html.py   --dir out/stitch --glob "keyframe_chunk_*.png" --title "vidsmash"
 ```
 
+**Canonical wrapper:** `run_pipeline.cmd <input.mp4> [out_dir] [extra_args...]` at the repo root runs the four stages with `PYTHONIOENCODING=utf-8` set (PowerShell cp1252 breaks on Unicode help text) and tolerates the pre-existing `validate_stitch` schema mismatch as a warning. No stitch flags are pinned in the wrapper itself — the canonical behaviour IS the stitch_keyframes default. The wrapper forwards extra args through to stitch.
+
+### Canonical stitch defaults (DO NOT DOWNGRADE WITHOUT EVIDENCE)
+
+These behaviours are ON by default in `tools/stitch_keyframes.py`. Each was visually validated and each has previously regressed by being silently dropped — DO NOT change a default to off, and DO NOT omit `BooleanOptionalAction` from a new wrapper command without explicit user approval.
+
+| Default | Why it MUST stay on | Opt-out flag (diagnostics only) |
+|---|---|---|
+| `--clear-beyond-bubble-extent` (True) | Pass-7 Canny gutter clear. Without it the scrollbar leak + pass-2 gutter fabrication artifacts return immediately. | `--no-clear-beyond-bubble-extent` |
+| `--bubble-extent-pad 0` | Canny gradient already gives a pixel-perfect right edge (x=R=1102 on iOS @3x); any pad > 0 leaves a few-px bubble bulge into the gutter. | pass a different `--bubble-extent-pad N` |
+| `--bubble-extent-synthetic-aa` (True) | Re-paints the 3-px AA fringe at the right bubble edge so the post-clear edge looks smooth instead of mechanical. | `--no-bubble-extent-synthetic-aa` |
+| `--bubble-extent-aa-inset 1` | Shaves 1 px to remove the residual 1-px bubble extension past the visually-perceived edge that Canny reports on lexiconv. | pass `--bubble-extent-aa-inset 0` |
+| `--mask-detected-circles` (True) | Auto-discovers + masks the iOS scroll-to-latest button across bands. Without it the button leaves a dark ghost inside bubbles via pass-1 partial averaging. | `--no-mask-detected-circles` |
+| `--rescue-starved-circles` (True) | Decodes extra frames whose button sits elsewhere, fills the all-button-covered canvas zones. Without it pass-4 Telea inpaint smears nearby text into the starved zones. | `--no-rescue-starved-circles` |
+| `--rescue-refine-offset` (True) | Matches each rescue band's luma row profile against the nearest already-placed band to correct dys-cum_y drift (a few px to 1-2 text lines over long scroll runs). Without it rescue text appears vertically shifted, sometimes showing wrong characters that come from a different scroll position. | `--no-rescue-refine-offset` |
+| `--rescue-refine-search-radius 80` | Vertical search window for the rescue-offset match. 80 px (~4 text lines) covers all observed drifts on lexiconv (max seen: 76 px). If reports show corrections clipped at the cap, bump higher. | pass `--rescue-refine-search-radius N` |
+| `--seam-line-fix` (True) | Pass-9: removes thin 1-2 row off-colour horizontal seams inside bubble interiors that survive pass-1 averaging. Vertical-neighbour-agreement check naturally preserves text (text's vertical neighbours are also text). | `--no-seam-line-fix` |
+
+If a regression report comes in that turns out to be one of these defaults being off, the first action is to confirm `report.json` `params` block matches the defaults table above, not to add more flags.
+
 ## Input invariants (per sample video `lexiconv.mp4`; new inputs may differ)
 
 | Field | Value |
@@ -200,3 +220,5 @@ Hardware decode (`hwaccel="cuda"`) and ffmpeg-side crop are both opt-in params o
 - **Faint scroll-to-latest button ghost** on coverage-1 canvas rows (see Stitch §). Acceptable for current outputs; revisit if it bites OCR.
 - **Drag-reveals-data extraction.** Stub only. `detect_pauses.py` flags drag-suspect pauses via column-profile MAD between adjacent pauses (29/45 on `lexiconv.mp4` — threshold may be too tight).
 - **Decode-count vs ffprobe-report mismatch** is non-critical (`[warn] decoded N+2 frames but ffprobe reported N`).
+- **Text-on-black right-edge clipping.** System messages (centred "Learn more", "You're friends on Facebook", encryption notice) live OUTSIDE bubbles on black background. The Canny bubble-extent detector sometimes treats the strong text→background transition on the LAST glyph as a bubble right-edge, and pass-7 + aa_inset=1 then clips ~1-3 px off that final letter. Fix needs the bubble-extent detector to require evidence of a bubble FILL (blue/grey contiguous interior) inside detected R before treating R as a bubble edge; without that evidence treat the row as "no bubble" and skip pass-7 clearing. Not done; out of scope for the rescue/seam pass.
+- **Residual horizontal rescue offset.** `--rescue-refine-offset` corrects the VERTICAL component of cum_y drift via 1-D row-profile matching. Horizontal drift caused by accidental horizontal drag during recording is not addressed (no horizontal scroll model — the video is supposed to be vertical-only). Small residual sub-pixel horizontal misalignment also shows as edge blur on rescued text in a few frames. A 2-D match would need to be added if this becomes important.
