@@ -22,7 +22,10 @@
     "overlay_min_area": 30,
     "overlay_max_strip_width": 50,
     "mask_circle": "",
-    "mask_right_strip_from": -1
+    "mask_right_strip_from": -1,
+    "no_clean_policy": "median",
+    "pass2_variance_tol": 16,
+    "alpha_dilate_iters": 2
   },
   "n_keyframes": 45,
   "n_bridges": 16,
@@ -4733,9 +4736,15 @@
     "scipy_available": true,
     "canvas_pixels_total": 32999682,
     "canvas_pass1_clean_mean": 20299159,
-    "canvas_pass2_all_band_median": 12700523,
+    "canvas_pass2_filled": 12700523,
+    "canvas_pass2_need_pixels": 12700523,
+    "canvas_pass2_skipped_k1": 0,
+    "canvas_pass2_skipped_variance": 0,
     "canvas_pass3_strip_inpainted": 25,
     "canvas_pass4_spatial_inpainted_no_coverage": 0,
+    "canvas_pass5_alpha_dilated": 0,
+    "canvas_alpha_zero_final": 0,
+    "canvas_alpha_zero_pct": 0.0,
     "clean_coverage_mean": 1.153,
     "total_coverage_mean": 2.017,
     "strip_runs": [

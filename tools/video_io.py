@@ -678,7 +678,11 @@ class ChunkWriter:
 
     def _write(self, arr: np.ndarray) -> None:
         path = self.out_dir / f"{self.prefix}_{self._chunk_index:03d}.png"
-        Image.fromarray(arr, mode="RGB").save(path, optimize=False, compress_level=4)
+        if arr.ndim == 3 and arr.shape[2] == 4:
+            mode = "RGBA"
+        else:
+            mode = "RGB"
+        Image.fromarray(arr, mode=mode).save(path, optimize=False, compress_level=4)
         self._emitted.append({"index": self._chunk_index, "path": str(path), "height": int(arr.shape[0])})
         self._chunk_index += 1
 

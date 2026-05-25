@@ -22,15 +22,28 @@ vidsmash/
                             #   match_1d_offset, ChunkWriter, static-band detection
     detect_pauses.py        # velocity-based pause detector → out/keyframes.json
     detect_overlays.py      # agreement-fraction overlay-mask detector
-                            #   (iOS scrollbar / scroll-to-latest button etc.)
-    stitch_keyframes.py     # keyframe+bridge stitcher with 4-pass overlay-aware
-                            #   canvas fill → out/stitch/keyframe_chunk_NNN.png
+                            #   (iOS scrollbar / static gutter etc.)
+    detect_overlay_circles.py # HoughCircles-based screen-fixed circular
+                              #   overlay detector (iOS scroll-to-latest button)
+                              #   discover_persistent_circles +
+                              #   detect_circle_in_band
+    detect_bubble_extents.py # cv2.Canny + morph-close per-row leftmost/rightmost
+                             #   bubble-edge detection (library + PoC CLI)
+    stitch_keyframes.py     # keyframe+bridge stitcher with multi-pass overlay-aware
+                            #   canvas fill + extent-based gutter clear +
+                            #   per-band detected-circle masks
+                            #   → out/stitch/keyframe_chunk_NNN.png
     validate_stitch.py      # pair-overlap MAD + canvas placement MAD + coverage
     inspect_keyframe_chain.py
+    inspect_brightness.py   # per-region pixel-colour histogram inspector (debug)
     crop_chunk.py           # PNG region cropper (debug)
     extract_frame.py        # single-frame ffmpeg extractor (debug)
     find_overlays.py        # single-frame colour-heuristic overlay sanity tool
+    draw_circle.py          # annotate a frame with a known (cx,cy,r) (debug)
+    smoke_circle_detector.py # smoke test for detect_overlay_circles
+    diff_circle_regions.py  # side-by-side patch diff: baseline vs circle-masked stitch
     make_view_html.py       # emit view.html that vertically renders chunk PNGs
+  ALTERNATIVE.md            # deferred OCR+HTML hybrid approach (with switch triggers)
   out/
     keyframes.json          # detect_pauses output (timeline + per-pause meta)
     timeline.png            # detect_pauses visualisation
@@ -87,7 +100,18 @@ mask[y, x]      = n_agree[y, x] / N_bands ≥ frac
 
 with defaults `frac=0.6`, `tol=12`. Connected components are dilated by 2 px and components smaller than `min_area=30` are dropped. Entry: `detect_overlay_mask_from_bands(bands, *, agreement_frac=0.6, agreement_tol=12, dilate=2, min_area=30) → (mask, report)`. Report `components[*].bbox` is `[x0, y0, x1, y1]`.
 
-On `lexiconv.mp4`: 426 components, 42.8 % of one band masked; dominant components are the left gutter (x = 0..355) and the right-edge area (x = 856..1126) containing scrollbar + scroll-to-latest button.
+On `lexiconv.mp4`: 426 components, 42.8 % of one band masked; dominant components are the left gutter (x = 0..355) and the right-edge area (x = 856..1126) containing the scrollbar. The scroll-to-latest button is **not** reliably caught here (it is conditionally visible and centered far inside the dynamic band where agreement-fraction sometimes falls below threshold). It is handled separately by `detect_overlay_circles.py`.
+
+## Detect overlay circles (`tools/detect_overlay_circles.py`)
+
+The iOS scroll-to-latest button is a screen-fixed gray-filled circle (~120 px diameter) with a downward chevron. It is **opaque** (not semi-transparent), only shown when not at the bottom, and lands at the same screen position in every frame that contains it. Agreement-fraction (above) misses it intermittently because the dark chevron + thin outline produce sharp variance vs the disc fill, and because conditional visibility splits the prevalence below `frac=0.6` in some band sets. Result in the baseline pipeline: pass-1 averages partially blend the disc, pass-2 median over all covering bands picks the dark chevron/outline → visible dark half-disc "ghost" on the stitched canvas everywhere a band carrying the button was placed.
+
+This module uses **OpenCV HoughCircles** in two stages:
+
+1. **Discovery** — `discover_persistent_circles(bands, *, min_prevalence=0.4, r_min=20, r_max=100, bin_px=8, param1=100, param2=30, min_dist=60, dp=1.2, median_blur_ksize=5) → (list[CircleSpec], report)`. Runs HoughCircles on each band, bins detections by `(cx_bin, cy_bin)` with `bin_px=8`, dedupes one vote per band per bin, and promotes any bin appearing in `≥ min_prevalence` fraction of bands. Returns one `CircleSpec` per promoted bin (cx, cy, r, prevalence, r_min, r_max, n_detected, n_total).
+2. **Per-band detection** — `detect_circle_in_band(band, *, expected_cx, expected_cy, expected_r, slack_xy=10, slack_r=4, pad=4, param1=100, param2=30, dp=1.2, median_blur_ksize=5, min_dist=60) → (mask, BandDetection)`. Crops a tight `(2*(r+slack_xy))²` ROI around the expected center, runs HoughCircles with `[r-slack_r, r+slack_r]` radius sweep, and returns the closest hit's filled disk mask (radius `detected_r + pad` to cover the AA outline). `~5-10 ms / band`.
+
+On `lexiconv.mp4`: discovery finds 1 spec at `(cx=564, cy=876, r=60)` with 63.9 % prevalence; per-band detector hits 42 / 61 placed bands; total mask area ≈ 540 k px (summed across bands).
 
 ## Stitch keyframes (`tools/stitch_keyframes.py`)
 

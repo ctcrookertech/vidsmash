@@ -19,9 +19,9 @@ TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width={width}, initial-scale=1">
 <title>{title}</title>
 <style>
-  html, body {{ margin: 0; padding: 0; background: #000; color: #ddd; font-family: -apple-system, Segoe UI, sans-serif; }}
+  html, body {{ margin: 0; padding: 0; background: {bg}; color: #ddd; font-family: -apple-system, Segoe UI, sans-serif; }}
   h1 {{ font-size: 14px; font-weight: 400; margin: 8px 12px; opacity: 0.6; }}
-  .stream {{ display: block; width: {width}px; max-width: 100%; margin: 0 auto; }}
+  .stream {{ display: block; width: {width}px; max-width: 100%; margin: 0 auto; background: {chunk_bg}; }}
   .stream img {{ display: block; width: 100%; height: auto; margin: 0; padding: 0; border: 0; }}
 </style>
 </head>
@@ -47,6 +47,10 @@ def main() -> int:
                     help="CSS render width for the image column.")
     ap.add_argument("--out-name", default="view.html",
                     help="Output filename written into --dir.")
+    ap.add_argument("--bg", default="#000",
+                    help="CSS background for the body (outside the chunk column).")
+    ap.add_argument("--chunk-bg", default="#1f1f1f",
+                    help="CSS background BEHIND the chunk images. Shows through any transparent (RGBA alpha=0) pixels — pick something that contrasts with both message bubbles and the iOS dark gutter so holes are obvious.")
     args = ap.parse_args()
 
     if not args.dir.is_dir():
@@ -57,7 +61,10 @@ def main() -> int:
     imgs = "\n".join(
         f'  <img src="{f.name}" alt="{f.stem}">' for f in files
     )
-    html = TEMPLATE.format(title=args.title, width=args.width, n=len(files), imgs=imgs)
+    html = TEMPLATE.format(
+        title=args.title, width=args.width, n=len(files), imgs=imgs,
+        bg=args.bg, chunk_bg=args.chunk_bg,
+    )
     out = args.dir / args.out_name
     out.write_text(html, encoding="utf-8")
     print(f"[write] {out} ({len(files)} images)")
